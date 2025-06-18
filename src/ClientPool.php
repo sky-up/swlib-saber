@@ -11,9 +11,26 @@ use Swlib\Util\MapPool;
 use Swoole\Coroutine;
 use Swoole\Coroutine\Channel;
 use Swoole\Coroutine\Http\Client;
+use WeakMap;
 
 class ClientPool extends MapPool
 {
+    /**
+     * 存储客户端与池键的关联关系
+     * @var WeakMap|null
+     */
+    private ?WeakMap $clientPoolKeys = null;
+
+    /**
+     * 获取或初始化WeakMap
+     */
+    private function getClientPoolKeys(): WeakMap
+    {
+        if ($this->clientPoolKeys === null) {
+            $this->clientPoolKeys = new WeakMap();
+        }
+        return $this->clientPoolKeys;
+    }
 
     public function createEx(array $options, bool $temp = false)
     {
@@ -27,8 +44,8 @@ class ClientPool extends MapPool
         if (!$temp) {
             $key = $options['pool_key'] ?? "{$options['host']}:{$options['port']}";
             parent::create($options, $key);
-            /** @noinspection PhpUndefinedFieldInspection */
-            $client->pool_key = $key;
+            // 使用WeakMap存储关联关系，避免动态属性
+            $this->getClientPoolKeys()[$client] = $key;
         }
         return $client;
     }
@@ -67,7 +84,9 @@ class ClientPool extends MapPool
 
     public function putEx(Client $client)
     {
-        $key = $client->pool_key ?? "{$client->host}:{$client->port}";
+        // 从WeakMap获取pool_key，如果不存在则使用默认值
+        $clientPoolKeys = $this->getClientPoolKeys();
+        $key = $clientPoolKeys[$client] ?? "{$client->host}:{$client->port}";
         if ($this->resource_map[$key] ?? false) {
             parent::put($client, $key);
         } else {
@@ -78,7 +97,9 @@ class ClientPool extends MapPool
     public function destroyEx(Client $client)
     {
         $client->close();
-        $key = $client->pool_key ?? "{$client->host}:{$client->port}";
+        // 从WeakMap获取pool_key，如果不存在则使用默认值
+        $clientPoolKeys = $this->getClientPoolKeys();
+        $key = $clientPoolKeys[$client] ?? "{$client->host}:{$client->port}";
         if ($this->status_map[$key] ?? false) {
             parent::destroy($client, $key);
         }
